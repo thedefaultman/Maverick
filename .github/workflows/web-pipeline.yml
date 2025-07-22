@@ -1,0 +1,88 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  detect-framework:
+    runs-on: ubuntu-latest
+    outputs:
+      framework: ${{ steps.detect.outputs.framework }}
+      build-command: ${{ steps.detect.outputs.build-command }}
+      output-directory: ${{ steps.detect.outputs.output-directory }}
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Detect Framework
+      id: detect
+      run: |
+        if [ -f "next.config.js" ] || [ -f "next.config.ts" ] || [ -f "next.config.mjs" ]; then
+          echo "framework=nextjs" >> $GITHUB_OUTPUT
+          echo "build-command=npm run build" >> $GITHUB_OUTPUT
+          echo "output-directory=.next" >> $GITHUB_OUTPUT
+        elif [ -f "nuxt.config.js" ] || [ -f "nuxt.config.ts" ]; then
+          echo "framework=nuxt" >> $GITHUB_OUTPUT
+          echo "build-command=npm run build" >> $GITHUB_OUTPUT
+          echo "output-directory=.output" >> $GITHUB_OUTPUT
+        elif [ -f "vite.config.js" ] || [ -f "vite.config.ts" ]; then
+          echo "framework=vite" >> $GITHUB_OUTPUT
+          echo "build-command=npm run build" >> $GITHUB_OUTPUT
+          echo "output-directory=dist" >> $GITHUB_OUTPUT
+        elif [ -f "angular.json" ]; then
+          echo "framework=angular" >> $GITHUB_OUTPUT
+          echo "build-command=npm run build" >> $GITHUB_OUTPUT
+          echo "output-directory=dist" >> $GITHUB_OUTPUT
+        elif [ -f "vue.config.js" ] || grep -q '"@vue/cli"' package.json 2>/dev/null; then
+          echo "framework=vue" >> $GITHUB_OUTPUT
+          echo "build-command=npm run build" >> $GITHUB_OUTPUT
+          echo "output-directory=dist" >> $GITHUB_OUTPUT
+        elif grep -q '"react"' package.json 2>/dev/null; then
+          echo "framework=react" >> $GITHUB_OUTPUT
+          echo "build-command=npm run build" >> $GITHUB_OUTPUT
+          echo "output-directory=build" >> $GITHUB_OUTPUT
+        else
+          echo "framework=static" >> $GITHUB_OUTPUT
+          echo "build-command=npm run build || echo 'No build script found'" >> $GITHUB_OUTPUT
+          echo "output-directory=." >> $GITHUB_OUTPUT
+        fi
+
+  build-and-deploy:
+    needs: detect-framework
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+    
+    - name: Install dependencies
+      run: |
+        if [ -f "package-lock.json" ]; then
+          npm ci
+        elif [ -f "yarn.lock" ]; then
+          yarn install --frozen-lockfile
+        elif [ -f "pnpm-lock.yaml" ]; then
+          npm install -g pnpm && pnpm install --frozen-lockfile
+        else
+          npm install
+        fi
+    
+    - name: Build Application
+      run: ${{ needs.detect-framework.outputs.build-command }}
+      env:
+        NODE_ENV: production
+    
+        - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      if: github.ref == 'refs/heads/main'
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ${{ needs.detect-framework.outputs.output-directory }}
+        cname: ${{ secrets.CUSTOM_DOMAIN }}
